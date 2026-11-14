@@ -215,7 +215,7 @@ class TLX_AddonPrefs(AddonPreferences):
     window_capture_scope: EnumProperty(
         name="Window Capture Scope", items=constants.WINDOW_CAPTURE_SCOPES, default='VIEW3D')
     window_stabilize_view: BoolProperty(
-        name="Stabilize 3D View (Window)", default=True,
+        name="Stabilize 3D View (Window)", default=False,
         description="Hide the gizmo and viewport overlays for the instant "
                     "each screenshot is taken, then restore them right "
                     "after — keeps captured frames clean of selection "
