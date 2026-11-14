@@ -425,7 +425,8 @@ class StateManager:
             self._camera_schedulers[camera_name] = CameraScheduler(
                 camera_name, interval, start_index)
 
-    def get_due_cameras(self, camera_names: List[str], round_robin: bool = False) -> List[str]:
+    def get_due_cameras(self, camera_names: List[str], round_robin: bool = False,
+                        limit: int = 1) -> List[str]:
         with self._lock:
             if not camera_names:
                 return []
@@ -435,6 +436,7 @@ class StateManager:
             if round_robin:
                 start = self._rr_index
                 n     = len(camera_names)
+                limit = max(1, int(limit))
                 for offset in range(n):
                     idx   = (start + offset) % n
                     name  = camera_names[idx]
@@ -442,7 +444,8 @@ class StateManager:
                     if sched and sched.is_due(now):
                         due.append(name)
                         self._rr_index = (idx + 1) % n
-                        break
+                        if len(due) >= limit:
+                            break
             else:
                 for name in camera_names:
                     sched = scheds.get(name)

@@ -61,8 +61,8 @@ def init_camera_schedulers(scene, base_dir: str, prefs):
         logger.debug(f"Initialized {camera.name}: interval={interval}, start={start_index}")
 
 
-def pick_due_cameras(scene, prefs, round_robin: bool = False) -> List[int]:
-    """Pick cameras that are due for capture."""
+def pick_due_cameras(scene, prefs, round_robin: bool = False, limit: int = 1) -> List[int]:
+    """Pick cameras that are due for capture (round-robin: at most `limit`)."""
     if len(scene.tlx_cameras) == 0:
         return []
 
@@ -78,7 +78,7 @@ def pick_due_cameras(scene, prefs, round_robin: bool = False) -> List[int]:
     if not camera_names:
         return []
 
-    due_names = StateManager().get_due_cameras(camera_names, round_robin=round_robin)
+    due_names = StateManager().get_due_cameras(camera_names, round_robin=round_robin, limit=limit)
     return [camera_indices[name] for name in due_names if name in camera_indices]
 
 

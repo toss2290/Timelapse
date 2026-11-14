@@ -255,19 +255,28 @@ def capture_cameras(context, base_dir: str, require_dirty: bool = True) -> bool:
 
     if edit_handler.should_skip_capture():
         return False
-    if not edit_handler.prepare_for_capture(context):
-        return False
 
     mgr = StateManager()
 
     if require_dirty and prefs and prefs.idle_detection:
         if not mgr.dirty:
-            edit_handler.restore_edit_mode(context)
             return False
 
     if len(scene.tlx_cameras) == 0:
-        edit_handler.restore_edit_mode(context)
         raise RuntimeError('Camera list is empty.')
+
+    # Work out which cameras are due BEFORE touching anything: switching out of
+    # Edit Mode (FORCE_OBJECT) on a heartbeat where nothing is due would only
+    # disturb the user for no frame.
+    use_round_robin = bool(prefs.camera_round_robin) if prefs else True
+    max_per_tick    = max(1, int(getattr(prefs, 'camera_max_per_tick', 1))) if prefs else 1
+    camera_indices  = scheduler.pick_due_cameras(
+        scene, prefs, round_robin=use_round_robin, limit=max_per_tick)[:max_per_tick]
+    if not camera_indices:
+        return False
+
+    if not edit_handler.prepare_for_capture(context):
+        return False
 
     original_camera      = scene.camera
     original_filepath    = scene.render.filepath
@@ -284,16 +293,6 @@ def capture_cameras(context, base_dir: str, require_dirty: bool = True) -> bool:
     _shading_backup = []
 
     try:
-        use_round_robin = bool(prefs.camera_round_robin) if prefs else True
-        camera_indices  = scheduler.pick_due_cameras(scene, prefs, round_robin=use_round_robin)
-        max_per_tick    = int(getattr(prefs, 'camera_max_per_tick', 1)) if prefs else 1
-        camera_indices  = camera_indices[:max(1, max_per_tick)]
-
-        if not camera_indices:
-            # Nothing is due on this heartbeat: leave the scene and the user's
-            # viewport exactly as they are (no shading lock, no engine swap).
-            return False
-
         touched = True
         mgr.set_ignore_depsgraph(True)
 

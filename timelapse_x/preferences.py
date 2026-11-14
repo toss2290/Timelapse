@@ -72,7 +72,7 @@ def _on_camera_action_count_toggle(self, context):
 # ========================================================================================
 
 class TLX_AddonPrefs(AddonPreferences):
-    bl_idname = __name__.split('.')[0]
+    bl_idname = __package__   # 'timelapse_x', or 'bl_ext.<repo>.timelapse_x' as an Extension
 
     # ── Output ──────────────────────────────────────────────────────────────
     output_dir: StringProperty(

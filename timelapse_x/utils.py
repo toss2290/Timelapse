@@ -299,8 +299,11 @@ def _validate_winar_cache(cache: Tuple) -> bool:
     try:
         if window is None or area is None or region is None:
             return False
-        # Light validity check — accessing .type is a fast C property
-        _ = area.type
+        # Light validity check — accessing .type is a fast C property. The area
+        # must still be a 3D viewport: if the user switched that area to
+        # another editor, search again instead of capturing the wrong editor.
+        if area.type != 'VIEW_3D':
+            return False
         _ = region.type
         return True
     except (AttributeError, ReferenceError, RuntimeError):
