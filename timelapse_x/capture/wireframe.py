@@ -83,6 +83,41 @@ def _evict_lru_material():
     _cache_stats['evictions'] += 1
 
 
+_EEVEE_IDS = ('BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE')
+
+
+def _resolve_engine(requested: str) -> str:
+    """Pick the engine to render with: the requested one if this Blender has it,
+    otherwise Cycles, then Eevee, then Workbench. (The Eevee identifier differs
+    between Blender versions, so either spelling satisfies an Eevee request.)"""
+    available = set(utils.get_available_engines())
+    order = [requested]
+    if requested in _EEVEE_IDS:
+        order += [e for e in _EEVEE_IDS if e != requested]
+    order += ['CYCLES', *_EEVEE_IDS, 'BLENDER_WORKBENCH']
+    for engine in order:
+        if engine in available:
+            return engine
+    return 'BLENDER_WORKBENCH'
+
+
+def _setup_workbench_flat(temp_scene) -> None:
+    """Workbench ignores node materials and world nodes: use flat material
+    colors so the result matches the other engines as closely as possible."""
+    shading = getattr(getattr(temp_scene, 'display', None), 'shading', None)
+    if shading is None:
+        return
+    for attr, value in (('light', 'FLAT'), ('color_type', 'MATERIAL'),
+                        ('show_shadows', False), ('show_cavity', False),
+                        ('show_object_outline', False),
+                        ('show_specular_highlight', False)):
+        if hasattr(shading, attr):
+            try:
+                setattr(shading, attr, value)
+            except (TypeError, AttributeError, ValueError) as e:
+                logger.debug(f"Workbench shading {attr}={value!r} not applied: {e}")
+
+
 def _create_material(color: Tuple[float, float, float]):
     mat_name = f"TLX_WF_Mat_{int(color[0]*255)}_{int(color[1]*255)}_{int(color[2]*255)}"
 
@@ -92,6 +127,7 @@ def _create_material(color: Tuple[float, float, float]):
 
     mat = bpy.data.materials.new(name=mat_name)
     mat.use_nodes = True
+    mat.diffuse_color = (color[0], color[1], color[2], 1.0)   # used by Workbench
 
     nodes = mat.node_tree.nodes
     nodes.clear()
@@ -414,6 +450,11 @@ def _setup_background(temp_scene, transparent_bg: bool = False,
         bg_node.inputs['Color'].default_value = (bg_color[0], bg_color[1], bg_color[2], 1.0)
         bg_node.inputs['Strength'].default_value = bg_strength
 
+    try:   # Workbench reads this, not the node tree
+        world.color = tuple(min(1.0, max(0.0, c * bg_strength)) for c in bg_color[:3])
+    except (AttributeError, TypeError, ValueError):
+        pass
+
     temp_scene.world = world
 
 
@@ -431,7 +472,8 @@ def render_freestyle(
     transparent_bg: bool = False,
     disable_shadows: bool = True,
     use_object_colors: bool = False,
-    default_object_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    default_object_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
+    engine: str = 'CYCLES',
 ):
     """Render wireframe with Freestyle (Blender 5.2 compatible)."""
 
@@ -479,17 +521,10 @@ def render_freestyle(
         _apply_object_colors(temp_scene, use_object_colors, default_object_color)
         _mark_freestyle_edges(temp_scene)
 
-        # Choose render engine — BLENDER_EEVEE removed in Blender 5.x
-        available_engines = utils.get_available_engines()
-
-        if 'CYCLES' in available_engines:
-            selected_engine = 'CYCLES'
-        elif 'BLENDER_EEVEE_NEXT' in available_engines:
-            selected_engine = 'BLENDER_EEVEE_NEXT'
-        else:
-            selected_engine = 'BLENDER_WORKBENCH'
-
+        selected_engine = _resolve_engine(engine)
         temp_scene.render.engine = selected_engine
+        if selected_engine == 'BLENDER_WORKBENCH':
+            _setup_workbench_flat(temp_scene)
 
         _setup_freestyle(temp_scene, thickness, color)
 
@@ -525,7 +560,7 @@ def render_freestyle(
                 if hasattr(cycles, 'use_denoising'):
                     cycles.use_denoising = False
 
-        elif selected_engine == 'BLENDER_EEVEE_NEXT':
+        elif selected_engine in _EEVEE_IDS:
             eevee = getattr(temp_scene, 'eevee', None)
             if eevee:
                 # Blender 5.x EEVEE Next properties (guarded with hasattr)
@@ -537,7 +572,7 @@ def render_freestyle(
                 cycles = getattr(temp_scene, 'cycles', None)
                 if cycles and hasattr(cycles, 'max_bounces'):
                     cycles.max_bounces = 2
-            elif selected_engine == 'BLENDER_EEVEE_NEXT':
+            elif selected_engine in _EEVEE_IDS:
                 eevee = getattr(temp_scene, 'eevee', None)
                 if eevee and hasattr(eevee, 'use_shadows'):
                     eevee.use_shadows = False

@@ -392,6 +392,11 @@ class TLX_PT_panel(Panel):
 
         self._draw_video_progress(col)
 
+        if prefs:
+            row = col.row(align=True)
+            row.prop(prefs, 'video_fps', text='FPS')
+            row.prop(prefs, 'video_crf', text='CRF')
+
         row = col.row()
         row.enabled = session_active
         row.operator('tlx.compile_session_all',
@@ -580,6 +585,7 @@ class TLX_PT_panel(Panel):
                 sub.label(text="Capture Hotkey (click key to rebind):",
                           icon='EVENT_F9')
                 self._draw_hotkey_widget(sub, context)
+                sub.prop(prefs, 'window_input_suppress_ms', text="Debounce (ms)")
                 sub.label(text="Only this key triggers a frame — the "
                                "timer stays idle.", icon='INFO')
 

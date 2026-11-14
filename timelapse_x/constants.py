@@ -20,6 +20,8 @@ DEFAULT_IDLE_THRESHOLD:  Final[float] = 0.01
 # Video Export
 DEFAULT_VIDEO_FPS:          Final[int] = 30
 DEFAULT_VIDEO_BITRATE:      Final[int] = 6000
+DEFAULT_VIDEO_CRF:          Final[int] = 23
+DEFAULT_VIDEO_PRESET:       Final[str] = 'medium'
 DEFAULT_GOP_SIZE_MULTIPLIER: Final[int] = 2
 
 # UI
@@ -57,6 +59,19 @@ SPEED_PRESETS: Final[list] = [
     ('ULTRA_FAST', 'Ultra Fast', 'Maximum speed, lower quality'),
     ('BALANCED',   'Balanced',   'Good balance between speed and quality'),
     ('QUALITY',    'Quality',    'Best quality, slower capture'),
+]
+
+# x264 encoder speed presets (identifier, label, description)
+VIDEO_PRESETS: Final[list] = [
+    ('ultrafast', 'Ultrafast', 'Fastest encode, largest file'),
+    ('superfast', 'Superfast', ''),
+    ('veryfast',  'Very Fast', ''),
+    ('faster',    'Faster',    ''),
+    ('fast',      'Fast',      ''),
+    ('medium',    'Medium',    'Default balance of speed and file size'),
+    ('slow',      'Slow',      'Smaller file for the same quality'),
+    ('slower',    'Slower',    ''),
+    ('veryslow',  'Very Slow', 'Smallest file, slowest encode'),
 ]
 
 # MP4 Output Mode Enums

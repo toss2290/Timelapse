@@ -164,10 +164,39 @@ _ffmpeg_validator = FFMPEGValidator()
 _ffmpeg_path_cache: Optional[str] = None
 
 
+def _configured_ffmpeg() -> str:
+    """The FFmpeg path typed into the preferences ('' when empty)."""
+    prefs = utils.get_addon_preferences()
+    raw = (getattr(prefs, 'ffmpeg_path', '') or '').strip() if prefs else ''
+    return bpy.path.abspath(raw) if raw else ''
+
+
+def _validated_configured_ffmpeg(path: str) -> str:
+    """Verify a user-supplied ffmpeg path; a folder means 'ffmpeg inside it'.
+    Raises FFMPEGSecurityError when it is not a working FFmpeg."""
+    path = os.path.expanduser(path)
+    if os.path.isdir(path):
+        for name in ('ffmpeg.exe', 'ffmpeg'):
+            candidate = os.path.join(path, name)
+            if os.path.isfile(candidate):
+                path = candidate
+                break
+        else:
+            raise FFMPEGSecurityError(f"No ffmpeg executable in folder: {path}")
+    return _ffmpeg_validator.validate_ffmpeg_path(path)
+
+
 def find_ffmpeg_safe(refresh: bool = False) -> Optional[str]:
-    """Locate a verified FFmpeg. The result is cached (re-checked with a cheap
-    isfile) so the 'which' / '-version' subprocesses don't run on every call."""
+    """Locate a verified FFmpeg: the preference path first, then automatic
+    discovery. The discovery result is cached (re-checked with a cheap isfile)
+    so the 'which' / '-version' subprocesses don't run on every call."""
     global _ffmpeg_path_cache
+    custom = _configured_ffmpeg()
+    if custom:
+        try:
+            return _validated_configured_ffmpeg(custom)
+        except FFMPEGSecurityError as e:
+            logger.warning(f"Configured FFmpeg path not usable, searching instead: {e}")
     if not refresh and _ffmpeg_path_cache and os.path.isfile(_ffmpeg_path_cache):
         return _ffmpeg_path_cache
     _ffmpeg_path_cache = _discover_ffmpeg()
@@ -342,6 +371,21 @@ def _find_images_folder(root_dir: str, max_depth: int = 3) -> Optional[str]:
 _POLL_INTERVAL = 0.25   # seconds between polls while a job is running
 _STALL_TIMEOUT = 120.0  # kill a job whose frame counter has not advanced for this long
 _STATUS_CLEAR_AFTER = 10.0
+
+
+def _resolve_fps(op_fps, prefs) -> int:
+    """FPS to encode with: the operator's value, or the preference when it is 0."""
+    default = getattr(prefs, 'video_fps', constants.DEFAULT_VIDEO_FPS) if prefs else constants.DEFAULT_VIDEO_FPS
+    return max(1, min(240, int(op_fps) if op_fps else int(default)))
+
+
+def _encode_settings(prefs) -> dict:
+    """x264 preset and CRF from the preferences, kept inside the allowed ranges."""
+    preset = getattr(prefs, 'video_preset', constants.DEFAULT_VIDEO_PRESET) if prefs else constants.DEFAULT_VIDEO_PRESET
+    crf    = getattr(prefs, 'video_crf',    constants.DEFAULT_VIDEO_CRF)    if prefs else constants.DEFAULT_VIDEO_CRF
+    if preset not in FFMPEGValidator.ALLOWED_PRESETS:
+        preset = constants.DEFAULT_VIDEO_PRESET
+    return {'preset': preset, 'crf': max(0, min(51, int(crf)))}
 
 
 class _JobSpec:
@@ -748,7 +792,8 @@ class TLX_OT_compile_video(Operator):
     filepath:    StringProperty(subtype='FILE_PATH',  default='', options={'HIDDEN'})
     directory:   StringProperty(subtype='DIR_PATH',   default='', options={'HIDDEN'})
     ask_output:  BoolProperty(name='Choose Output via Dialog', default=False)
-    fps:         IntProperty(name='FPS', min=1, max=240, default=constants.DEFAULT_VIDEO_FPS)
+    fps:         IntProperty(name='FPS', min=0, max=240, default=0,
+                             description='Frames per second of the video. 0 = use the Video FPS preference')
 
     # SKIP_SAVE keeps 'stage' from being remembered between invocations;
     # invoke() also resets it, so a cancelled file picker cannot leave it stale.
@@ -759,6 +804,9 @@ class TLX_OT_compile_video(Operator):
 
         # Always reset stage so a previous cancelled run cannot leave it stale
         self.stage = 'PICK_IMAGES'
+
+        if prefs:
+            self.fps = prefs.video_fps   # shown (and editable) in the file dialog
 
         if prefs and prefs.output_dir:
             self.input_dir = bpy.path.abspath(prefs.output_dir)
@@ -838,11 +886,13 @@ class TLX_OT_compile_video(Operator):
             self.report({'ERROR'}, 'FFMPEG not found. Download: https://ffmpeg.org/download.html')
             return {'CANCELLED'}
 
+        prefs = utils.get_addon_preferences()
+        fps   = _resolve_fps(self.fps, prefs)
         enqueue_jobs([_JobSpec(os.path.basename(output_path), images_folder,
-                               output_path, self.fps)])
+                               output_path, fps, **_encode_settings(prefs))])
         self.report({'INFO'},
                     f'Encoding {len(files)} frames in the background '
-                    f'(~{len(files) / self.fps:.1f}s video). Blender stays usable.')
+                    f'(~{len(files) / fps:.1f}s video). Blender stays usable.')
         return {'FINISHED'}
 
 
@@ -853,7 +903,8 @@ class TLX_OT_compile_session_all(Operator):
     bl_label   = 'Compile Current Session'
     bl_options = {'REGISTER'}
 
-    fps: IntProperty(name='FPS', min=1, max=240, default=constants.DEFAULT_VIDEO_FPS)
+    fps: IntProperty(name='FPS', min=0, max=240, default=0,
+                     description='Frames per second of the video. 0 = use the Video FPS preference')
 
     @classmethod
     def poll(cls, context):
@@ -863,6 +914,8 @@ class TLX_OT_compile_session_all(Operator):
     def execute(self, context):
         prefs       = utils.get_addon_preferences()
         session_dir = StateManager().latest_session_dir
+        fps         = _resolve_fps(self.fps, prefs)
+        encode_opts = _encode_settings(prefs)
 
         if not (session_dir and os.path.isdir(session_dir)):
             self.report({'ERROR'}, 'No session folder yet - record something first')
@@ -909,7 +962,7 @@ class TLX_OT_compile_session_all(Operator):
                 logger.error(f"Cannot prepare output folder for {folder_name}: {e}")
                 continue
             specs.append(_JobSpec(os.path.basename(output_path), target_dir,
-                                  output_path, self.fps))
+                                  output_path, fps, **encode_opts))
 
         if not specs:
             self.report({'ERROR'}, 'No output folder could be prepared')
@@ -946,9 +999,18 @@ class TLX_OT_test_ffmpeg_security(Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
+        custom = _configured_ffmpeg()
+        if custom:
+            try:
+                path = _validated_configured_ffmpeg(custom)
+                self.report({'INFO'}, f'FFmpeg OK (custom path): {path}')
+                return {'FINISHED'}
+            except FFMPEGSecurityError as e:
+                self.report({'WARNING'}, f'Custom FFmpeg path not usable: {e}')
+                return {'CANCELLED'}
         ffmpeg = find_ffmpeg_safe(refresh=True)
         if ffmpeg:
-            self.report({'INFO'}, f'✓ FFMPEG found: {ffmpeg}')
+            self.report({'INFO'}, f'FFmpeg found: {ffmpeg}')
         else:
             self.report({'WARNING'}, '⚠ FFMPEG not found — install from https://ffmpeg.org')
         return {'FINISHED'}

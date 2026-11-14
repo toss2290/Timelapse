@@ -20,6 +20,7 @@ used by ui/panels.py).
 
 import bpy
 import os
+import time
 import logging
 from bpy.types import Operator
 
@@ -33,6 +34,9 @@ try:
 except ImportError as e:
     window_capture = None
     logger.error(f"Capture import failed: {e}")
+
+
+_last_hotkey_time = 0.0   # time.monotonic() of the last accepted press
 
 
 # Starting point only — Ctrl+Shift+F9. Chosen to avoid clashing with
@@ -74,6 +78,8 @@ class TLX_OT_hotkey_capture(Operator):
         if utils.is_headless() or not window_capture:
             return {'CANCELLED'}
 
+        global _last_hotkey_time
+
         mgr  = StateManager()
         snap = mgr.get_recording_snapshot()
 
@@ -82,8 +88,16 @@ class TLX_OT_hotkey_capture(Operator):
             self.report({'WARNING'}, "Timelapse X: session directory missing")
             return {'CANCELLED'}
 
+        # Debounce: drop an accidental double-tap, but never a deliberate press.
+        prefs  = utils.get_addon_preferences()
+        gap_ms = int(getattr(prefs, 'window_input_suppress_ms', 0) or 0) if prefs else 0
+        now    = time.monotonic()
+        if gap_ms > 0 and (now - _last_hotkey_time) * 1000.0 < gap_ms:
+            logger.debug("Hotkey press ignored (debounce)")
+            return {'CANCELLED'}
+
         # force_save=True: bypass idle-diff / cooldown suppression — a
-        # deliberate keypress always produces a frame.
+        # press that passes the debounce always produces a frame.
         try:
             window_capture.capture_window_async(context, base_dir, force_save=True)
         except Exception as e:
@@ -91,6 +105,7 @@ class TLX_OT_hotkey_capture(Operator):
             self.report({'ERROR'}, "Timelapse X: capture failed")
             return {'CANCELLED'}
 
+        _last_hotkey_time = now
         logger.info("Hotkey capture triggered")
         return {'FINISHED'}
 

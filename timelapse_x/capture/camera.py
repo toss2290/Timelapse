@@ -157,11 +157,10 @@ def _get_edit_mode_info() -> dict:
 
 
 class EditModeHandler:
-    __slots__ = ('behavior', 'auto_save', '_original_mode', '_original_object', '_edit_info_cache')
+    __slots__ = ('behavior', '_original_mode', '_original_object', '_edit_info_cache')
 
-    def __init__(self, behavior: str, auto_save: bool = True):
+    def __init__(self, behavior: str):
         self.behavior         = behavior
-        self.auto_save        = auto_save
         self._original_mode   = None
         self._original_object = None
         self._edit_info_cache = None
@@ -252,7 +251,6 @@ def capture_cameras(context, base_dir: str, require_dirty: bool = True) -> bool:
 
     edit_handler = EditModeHandler(
         behavior  = prefs.edit_mode_behavior  if prefs else 'SKIP',
-        auto_save = prefs.edit_mode_auto_save if prefs else True,
     )
 
     if edit_handler.should_skip_capture():
@@ -579,6 +577,7 @@ def _render_wireframe(scene, camera, output_path: str, prefs):
         wireframe.render_freestyle(
             output_path_noext    = output_path,
             camera_obj           = camera,
+            engine               = getattr(prefs, 'wireframe_render_engine', 'CYCLES') if prefs else 'CYCLES',
             thickness            = prefs.wireframe_thickness          if prefs else 1.0,
             color                = tuple(prefs.wireframe_color)       if prefs else (0., 0., 0.),
             bg_color             = tuple(prefs.wireframe_bg_color)    if prefs else (1., 1., 1.),

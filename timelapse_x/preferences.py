@@ -95,7 +95,6 @@ class TLX_AddonPrefs(AddonPreferences):
     edit_mode_behavior: EnumProperty(
         name='Edit Mode Behavior', items=constants.EDIT_MODE_BEHAVIORS,
         default='CAPTURE_ANYWAY', update=_update_edit_mode_behavior)
-    edit_mode_auto_save: BoolProperty(name='Auto-save Before Capture', default=True)
 
     # ── Header Display ───────────────────────────────────────────────────────
     show_recording_header: BoolProperty(
@@ -158,11 +157,13 @@ class TLX_AddonPrefs(AddonPreferences):
     wireframe_render_engine: EnumProperty(
         name="Wireframe Render Engine",
         items=[
-            ('BLENDER_WORKBENCH', 'Workbench',  'Fast workbench engine'),
-            ('BLENDER_EEVEE_NEXT', 'Eevee Next', 'Modern Eevee (Blender 5.x)'),
-            ('CYCLES',            'Cycles',     'Cycles raytracing'),
+            ('BLENDER_WORKBENCH', 'Workbench',  'Fastest; flat colors, no lighting'),
+            ('BLENDER_EEVEE_NEXT', 'Eevee',     'Fast realtime engine'),
+            ('CYCLES',            'Cycles',     'Path tracing; slowest but most faithful'),
         ],
-        default='BLENDER_WORKBENCH')
+        default='CYCLES',
+        description="Engine used for Freestyle wireframe renders. Falls back to "
+                    "the next available engine if the chosen one is missing")
     show_freestyle_marks_in_edit: BoolProperty(
         name='Show Freestyle Marks in Edit', default=False,
         update=_update_show_freestyle_marks)
@@ -184,6 +185,22 @@ class TLX_AddonPrefs(AddonPreferences):
     # ── Video Export ─────────────────────────────────────────────────────────
     mp4_output_mode: EnumProperty(
         name='MP4 Output', items=constants.MP4_OUTPUT_MODES, default='SAME_AS_IMAGES')
+    ffmpeg_path: StringProperty(
+        name='FFmpeg Path', subtype='FILE_PATH', default='',
+        description="Path to the ffmpeg executable (or the folder that contains "
+                    "it). Leave empty to search Blender's folder, PATH and the "
+                    "usual install locations")
+    video_fps: IntProperty(
+        name='Video FPS', min=1, max=240, default=constants.DEFAULT_VIDEO_FPS,
+        description='Frames per second of exported videos')
+    video_crf: IntProperty(
+        name='Video Quality (CRF)', min=0, max=51, default=constants.DEFAULT_VIDEO_CRF,
+        description='x264 constant rate factor: lower = better quality and a '
+                    'bigger file. 18 is visually lossless, 23 is the default')
+    video_preset: EnumProperty(
+        name='Encoder Speed', items=constants.VIDEO_PRESETS,
+        default=constants.DEFAULT_VIDEO_PRESET,
+        description='Slower presets make smaller files at the same quality')
     mp4_custom_dir: StringProperty(
         name='MP4 Custom Folder', subtype='DIR_PATH', default='//Timelapse_Videos')
 
@@ -212,7 +229,9 @@ class TLX_AddonPrefs(AddonPreferences):
                     "stabilized)")
     window_async_capture:  BoolProperty(name="Window Async Capture", default=True)
     window_async_delay_ms: IntProperty(
-        name="Window Async Delay (ms)", min=0, max=200, default=2)
+        name="Window Async Delay (ms)", min=50, max=200, default=50,
+        description="Wait before the screenshot is taken so the viewport can "
+                    "redraw (values below 50 ms are not reliable)")
 
     # NOTE: Stealth Camera (which camera + whether it's enabled) lives on
     # the SCENE now (scene.tlx_window_stealth_camera_enabled / ...camera
@@ -228,7 +247,10 @@ class TLX_AddonPrefs(AddonPreferences):
     # declared after the broken one).
 
     window_input_suppress_ms: IntProperty(
-        name="Window Input Cooldown (ms)", min=0, max=2147483647, default=250)
+        name="Hotkey Debounce (ms)", min=0, max=5000, default=250,
+        description="Ignore a capture-hotkey press that comes sooner than this "
+                    "after the previous one (stops accidental double-tap "
+                    "duplicates). 0 = every press captures")
     window_capture_on_input_only: BoolProperty(
         name="Capture on Input Only (Window)", default=False,
         description="Disable the periodic timer for Window-mode captures "
@@ -338,6 +360,7 @@ class TLX_AddonPrefs(AddonPreferences):
         edit_box = box.box()
         edit_box.label(text="Edit Mode Behavior:", icon='EDITMODE_HLT')
         edit_box.prop(self, 'edit_mode_behavior', text='')
+        edit_box.label(text="Applies to Camera List captures only.", icon='INFO')
         if self.edit_mode_behavior == 'CAPTURE_ANYWAY':
             w = edit_box.box()
             w.alert = True
@@ -345,7 +368,10 @@ class TLX_AddonPrefs(AddonPreferences):
             col.label(text="⚠ WARNING: May cause crashes!", icon='ERROR')
             col.label(text="Switch to 'Skip Capture' for safer operation.")
         elif self.edit_mode_behavior == 'FORCE_OBJECT':
-            edit_box.prop(self, 'edit_mode_auto_save')
+            info = edit_box.column(align=True)
+            info.scale_y = 0.8
+            info.label(text="Switches to Object Mode for the capture,")
+            info.label(text="then returns to Edit Mode.")
         elif self.edit_mode_behavior == 'SKIP':
             info = edit_box.box()
             col  = info.column(align=True)
@@ -473,6 +499,13 @@ class TLX_AddonPrefs(AddonPreferences):
         row = box.row()
         row.enabled = (self.mp4_output_mode == 'CUSTOM_DIR')
         row.prop(self, 'mp4_custom_dir')
+        box.separator()
+        box.prop(self, 'ffmpeg_path')
+        row = box.row(align=True)
+        row.prop(self, 'video_fps')
+        row.prop(self, 'video_crf')
+        box.prop(self, 'video_preset')
+        box.operator('tlx.test_ffmpeg_security', icon='CONSOLE')
 
         # Window Capture
         box = layout.box()
@@ -507,7 +540,9 @@ class TLX_AddonPrefs(AddonPreferences):
         row = box.row()
         row.enabled = not self.window_capture_on_action_count
         row.prop(self, 'window_capture_on_input_only')
-        box.prop(self, 'window_input_suppress_ms')
+        row = box.row()
+        row.enabled = self.window_capture_on_input_only
+        row.prop(self, 'window_input_suppress_ms')
         box.separator()
         row = box.row()
         row.enabled = not self.window_capture_on_input_only

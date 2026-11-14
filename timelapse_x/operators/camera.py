@@ -142,6 +142,44 @@ class TLX_OT_cam_move_down(Operator):
 # Apply Speed Preset
 # ========================================================================================
 
+# One table drives both the dialog text and what is actually applied, so the
+# two can never disagree. 'min_interval' only raises default_interval.
+SPEED_PRESET_VALUES = {
+    'ULTRA_FAST': dict(
+        image_format='JPEG', jpeg_quality=80, camera_png_compress=3,
+        perf_depsgraph_suppress_ms=160, min_interval=1.0,
+        camera_low_overhead=True, camera_lock_interface=True,
+        camera_max_per_tick=1, camera_round_robin=True),
+    'BALANCED': dict(
+        image_format='JPEG', jpeg_quality=90, camera_png_compress=5,
+        perf_depsgraph_suppress_ms=140, min_interval=1.5,
+        camera_low_overhead=True, camera_lock_interface=True,
+        camera_max_per_tick=1, camera_round_robin=True),
+    'QUALITY': dict(
+        image_format='PNG', png_rgba=False, camera_png_compress=9,
+        perf_depsgraph_suppress_ms=120, min_interval=2.0,
+        camera_low_overhead=False, camera_lock_interface=False,
+        camera_max_per_tick=2, camera_round_robin=True),
+}
+
+
+def describe_speed_preset(preset: str):
+    """Human-readable lines for what `preset` will change."""
+    v = SPEED_PRESET_VALUES[preset]
+    fmt = v['image_format'] + (f" {v['jpeg_quality']}" if 'jpeg_quality' in v else '')
+    on_off = lambda flag: 'ON' if flag else 'OFF'
+    return [
+        f"Image format: {fmt}",
+        f"PNG compression: {v['camera_png_compress']}",
+        f"Cooldown: {v['perf_depsgraph_suppress_ms']} ms",
+        f"Default interval: at least {v['min_interval']:g} s",
+        f"Cameras per tick: {v['camera_max_per_tick']}",
+        f"Low-overhead render: {on_off(v['camera_low_overhead'])}",
+        f"Lock interface: {on_off(v['camera_lock_interface'])}",
+        f"Round-robin: {on_off(v['camera_round_robin'])}",
+    ]
+
+
 class TLX_OT_apply_speed_preset(Operator):
     """Apply performance preset to global settings and optionally all cameras."""
 
@@ -150,7 +188,10 @@ class TLX_OT_apply_speed_preset(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     preset: EnumProperty(name="Preset", items=constants.SPEED_PRESETS, default='BALANCED')
-    apply_to_all_cameras: BoolProperty(name="Apply to All Cameras", default=False)
+    apply_to_all_cameras: BoolProperty(
+        name="Apply to All Cameras", default=False,
+        description="Also give every camera its own performance override "
+                    "(it stays on until you turn it off per camera)")
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -163,17 +204,10 @@ class TLX_OT_apply_speed_preset(Operator):
 
         box = layout.box()
         box.label(text="Will change:", icon='INFO')
-        if self.preset == 'ULTRA_FAST':
-            for t in ("Format: JPEG 80", "Cooldown: 160ms", "PNG Compression: 3"):
-                box.label(text=f"• {t}")
-        elif self.preset == 'BALANCED':
-            for t in ("Format: JPEG 90", "Cooldown: 140ms", "PNG Compression: 5"):
-                box.label(text=f"• {t}")
-        else:
-            for t in ("Format: PNG", "Cooldown: 120ms", "PNG Compression: 9"):
-                box.label(text=f"• {t}")
-        box.label(text="• Round-robin: ON")
-        box.label(text="• Lock interface: ON")
+        for line in describe_speed_preset(self.preset):
+            box.label(text=f"• {line}")
+        if self.apply_to_all_cameras:
+            box.label(text="• Every camera: performance override ON")
 
     def execute(self, context):
         prefs = utils.get_addon_preferences()
@@ -189,33 +223,11 @@ class TLX_OT_apply_speed_preset(Operator):
         return {'FINISHED'}
 
     def _apply_global_preset(self, prefs):
-        prefs.camera_round_robin    = True
-        prefs.camera_max_per_tick   = 1
-        prefs.camera_lock_interface = True
-
-        if self.preset == 'ULTRA_FAST':
-            prefs.camera_low_overhead          = True
-            prefs.image_format                 = 'JPEG'
-            prefs.jpeg_quality                 = 80
-            prefs.perf_depsgraph_suppress_ms   = 160
-            prefs.default_interval             = max(1.0, prefs.default_interval)
-            prefs.camera_png_compress          = 3
-        elif self.preset == 'BALANCED':
-            prefs.camera_low_overhead          = True
-            prefs.image_format                 = 'JPEG'
-            prefs.jpeg_quality                 = 90
-            prefs.perf_depsgraph_suppress_ms   = 140
-            prefs.default_interval             = max(1.5, prefs.default_interval)
-            prefs.camera_png_compress          = 5
-        else:  # QUALITY
-            prefs.camera_low_overhead          = False
-            prefs.camera_max_per_tick          = 2
-            prefs.camera_lock_interface        = False
-            prefs.image_format                 = 'PNG'
-            prefs.png_rgba                     = False
-            prefs.perf_depsgraph_suppress_ms   = 120
-            prefs.default_interval             = max(2.0, prefs.default_interval)
-            prefs.camera_png_compress          = 9
+        for key, value in SPEED_PRESET_VALUES[self.preset].items():
+            if key == 'min_interval':
+                prefs.default_interval = max(value, prefs.default_interval)
+            else:
+                setattr(prefs, key, value)
 
     def _apply_to_cameras(self, scene, prefs):
         for camera_item in scene.tlx_cameras:
