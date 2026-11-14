@@ -45,13 +45,13 @@ class TLX_OT_open_session_folder(Operator):
 
     @classmethod
     def poll(cls, context):
-        return bool(StateManager().session_dir and
-                    os.path.isdir(StateManager().session_dir))
+        session_dir = StateManager().latest_session_dir
+        return bool(session_dir and os.path.isdir(session_dir))
 
     def execute(self, context):
-        session_dir = StateManager().session_dir
+        session_dir = StateManager().latest_session_dir
         if not session_dir or not os.path.isdir(session_dir):
-            self.report({'WARNING'}, 'No active session folder.')
+            self.report({'WARNING'}, 'No session folder yet.')
             return {'CANCELLED'}
         try:
             bpy.ops.wm.path_open(filepath=bpy.path.abspath(session_dir))
@@ -97,22 +97,19 @@ class TLX_OT_reveal_last_capture(Operator):
     @classmethod
     def poll(cls, context):
         mgr = StateManager()
-        if mgr.capture_mode == 'WINDOW':
-            return bool(mgr.last_window_image)
-        return mgr.counter > 0
+        return bool(mgr.last_window_image or mgr.latest_session_dir)
 
     def execute(self, context):
         mgr = StateManager()
-        if mgr.capture_mode == 'WINDOW':
-            last_path = mgr.last_window_image
-            if last_path and os.path.isfile(last_path):
-                try:
-                    bpy.ops.wm.path_open(filepath=os.path.dirname(last_path))
-                    return {'FINISHED'}
-                except Exception as e:
-                    self.report({'ERROR'}, f'Cannot reveal file: {e}')
-                    return {'CANCELLED'}
-        session_dir = mgr.session_dir
+        last_path = mgr.last_window_image
+        if last_path and os.path.isfile(last_path):
+            try:
+                bpy.ops.wm.path_open(filepath=os.path.dirname(last_path))
+                return {'FINISHED'}
+            except Exception as e:
+                self.report({'ERROR'}, f'Cannot reveal file: {e}')
+                return {'CANCELLED'}
+        session_dir = mgr.latest_session_dir
         if session_dir and os.path.isdir(session_dir):
             try:
                 bpy.ops.wm.path_open(filepath=session_dir)
@@ -143,7 +140,7 @@ class TLX_OT_copy_output_path(Operator):
     def execute(self, context):
         prefs = utils.get_addon_preferences()
         if self.path_type == 'SESSION':
-            path = StateManager().session_dir
+            path = StateManager().latest_session_dir
             if not path:
                 self.report({'WARNING'}, 'No active session.')
                 return {'CANCELLED'}

@@ -11,7 +11,7 @@ DEFAULT_SUPPRESS_MS: Final[int]  = 120
 
 # File Format
 IMAGE_EXTENSIONS:    Final[tuple] = ('.png', '.jpg', '.jpeg')
-DEFAULT_ZERO_PADDING: Final[int]  = 4
+DEFAULT_ZERO_PADDING: Final[int]  = 6
 
 # Performance
 DEFAULT_DOWNSCALE_SIZE:  Final[int]   = 64

@@ -67,9 +67,6 @@ class FFMPEGValidator:
         except Exception as e:
             raise FFMPEGSecurityError(f"Invalid path format: {e}")
 
-        if '..' in abs_path or abs_path.count(os.sep) > 20:
-            raise FFMPEGSecurityError(f"Suspicious path: {abs_path}")
-
         if not os.path.isfile(abs_path):
             raise FFMPEGSecurityError(f"FFMPEG not found or not a file: {abs_path}")
 
@@ -97,9 +94,12 @@ class FFMPEGValidator:
         if not file_path:
             raise FFMPEGSecurityError("Input file path is empty")
         abs_path = os.path.abspath(file_path)
-        for char in ['|', '&', ';', '$', '`', '\n', '\r']:
+        # FFmpeg runs with shell=False and an argument list, so shell
+        # metacharacters ('&', ';', '$' ...) are harmless and legal in folder
+        # names. Only characters that would corrupt the concat list are refused.
+        for char in ('\x00', '\n', '\r'):
             if char in file_path:
-                raise FFMPEGSecurityError(f"Suspicious character in path: {repr(char)}")
+                raise FFMPEGSecurityError(f"Unsupported character in path: {repr(char)}")
         if not os.path.isfile(abs_path):
             raise FFMPEGSecurityError(f"File not found: {abs_path}")
         if not os.access(abs_path, os.R_OK):
@@ -110,9 +110,9 @@ class FFMPEGValidator:
         if not output_path:
             raise FFMPEGSecurityError("Output path is empty")
         abs_path = os.path.abspath(output_path)
-        for char in ['|', '&', ';', '$', '`', '\n', '\r']:
+        for char in ('\x00', '\n', '\r'):
             if char in output_path:
-                raise FFMPEGSecurityError(f"Suspicious character in path: {repr(char)}")
+                raise FFMPEGSecurityError(f"Unsupported character in path: {repr(char)}")
         parent = os.path.dirname(abs_path)
         if not os.path.exists(parent):
             raise FFMPEGSecurityError(f"Output directory does not exist: {parent}")
@@ -219,7 +219,7 @@ def validate_images_for_compilation(image_dir, image_extensions=('.png', '.jpg',
     files = sorted([
         f for f in os.listdir(image_dir)
         if f.lower().endswith(image_extensions)
-    ])
+    ], key=utils.natural_sort_key)
     if not files:
         raise RuntimeError("No images found in directory")
 
@@ -812,7 +812,7 @@ class TLX_OT_compile_video(Operator):
         files = sorted([
             f for f in os.listdir(images_folder)
             if f.lower().endswith(constants.IMAGE_EXTENSIONS)
-        ])
+        ], key=utils.natural_sort_key)
         if not files:
             self.report({'ERROR'}, 'No images found in selected folder')
             return {'CANCELLED'}
@@ -857,15 +857,15 @@ class TLX_OT_compile_session_all(Operator):
 
     @classmethod
     def poll(cls, context):
-        session_dir = StateManager().session_dir
+        session_dir = StateManager().latest_session_dir
         return bool(session_dir and os.path.isdir(session_dir))
 
     def execute(self, context):
         prefs       = utils.get_addon_preferences()
-        session_dir = StateManager().session_dir
+        session_dir = StateManager().latest_session_dir
 
         if not (session_dir and os.path.isdir(session_dir)):
-            self.report({'ERROR'}, 'No active session folder')
+            self.report({'ERROR'}, 'No session folder yet - record something first')
             return {'CANCELLED'}
 
         camera_dirs = []

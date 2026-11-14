@@ -278,6 +278,29 @@ def _copy_object_to_scene(src_obj, temp_scene) -> Optional[object]:
         return None
 
 
+def _release_scene_copies(objects) -> None:
+    """Delete the per-frame object and mesh copies from bpy.data.
+
+    Unlinking them from the temp scene is not enough: they would stay behind as
+    orphans, and every captured frame would leak a copy of the whole scene.
+    """
+    for obj in list(objects):
+        mesh = None
+        try:
+            if obj.type == 'MESH' and obj.data and obj.data.name.startswith("TLX_WF_"):
+                mesh = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+        except (ReferenceError, RuntimeError, AttributeError) as e:
+            logger.debug(f"Could not remove wireframe copy: {e}")
+            continue
+        if mesh is not None:
+            try:
+                if mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+            except (ReferenceError, RuntimeError) as e:
+                logger.debug(f"Could not remove wireframe mesh copy: {e}")
+
+
 def _apply_object_colors(temp_scene, use_object_colors: bool = False,
                          default_color: Tuple[float, float, float] = (1.0, 1.0, 1.0)):
     colored_count = 0
@@ -426,6 +449,8 @@ def render_freestyle(
 
     prev_lock_render = getattr(source_scene.render, 'use_lock_interface', False)
 
+    object_map = {}
+
     try:
         temp_scene = _get_or_create_temp_scene()
 
@@ -546,6 +571,8 @@ def render_freestyle(
         raise RuntimeError(f"Wireframe render failed: {e}")
 
     finally:
+        _release_scene_copies(object_map.values())
+
         # Restore render_display_type
         if prev_display is not None and hasattr(viewport_prefs, 'render_display_type'):
             try:

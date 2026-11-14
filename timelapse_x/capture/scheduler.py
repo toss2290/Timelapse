@@ -112,6 +112,28 @@ def compute_min_timer_interval(scene, prefs) -> float:
     return max(constants.MIN_INTERVAL, min_interval)
 
 
+def apply_default_interval(scene, interval: float) -> None:
+    """Push a new default interval to the running schedulers.
+
+    Schedulers copy their interval when recording starts, so changing the scene
+    interval mid-recording would otherwise do nothing. Cameras with their own
+    interval override are left alone.
+    """
+    interval = max(constants.MIN_INTERVAL, float(interval))
+    mgr = StateManager()
+    for camera_item in scene.tlx_cameras:
+        camera = camera_item.camera
+        if not camera or camera_item.use_interval_override:
+            continue
+        sched = mgr.get_camera_scheduler(camera.name)
+        if not sched:
+            continue
+        sched.interval = interval
+        if sched.last_capture:
+            # A shorter interval takes effect right away instead of after the old one.
+            sched.next_due = min(sched.next_due, sched.last_capture + interval)
+
+
 def register():
     logger.info("Scheduler module registered")
 

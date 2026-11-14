@@ -21,6 +21,7 @@ from mathutils import Vector, Matrix
 from .. import constants
 from .. import utils
 from ..state_manager import StateManager
+from .. import progress as progress_module
 
 from . import scheduler
 from . import shading
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 init_camera_schedulers     = scheduler.init_camera_schedulers
 compute_min_timer_interval = scheduler.compute_min_timer_interval
+apply_default_interval     = scheduler.apply_default_interval
 
 
 def _rotate_camera_around_target(camera, target, angle_deg: float, axis: str = 'Z') -> None:
@@ -224,6 +226,26 @@ class EditModeHandler:
 # Main capture entry points
 # ============================================================================
 
+def _record_frame(output_path: str) -> None:
+    """Count one saved camera frame: state counter plus progress statistics.
+
+    `output_path` has no extension (Blender appends it when rendering), so the
+    file size is looked up under each known image extension.
+    """
+    StateManager().mark_captured()
+    size = 0
+    for ext in constants.IMAGE_EXTENSIONS:
+        try:
+            size = os.path.getsize(output_path + ext)
+            break
+        except OSError:
+            continue
+    try:
+        progress_module.get_recording_progress().add_frame(size)
+    except Exception as e:
+        logger.debug(f"Progress update failed: {e}")
+
+
 def capture_cameras(context, base_dir: str, require_dirty: bool = True) -> bool:
     scene = context.scene
     prefs = utils.get_addon_preferences()
@@ -258,24 +280,28 @@ def capture_cameras(context, base_dir: str, require_dirty: bool = True) -> bool:
     original_compression = getattr(img_settings, 'compression',  15)
     original_media_type  = getattr(img_settings, 'media_type',   None)
 
-    any_captured = False
-    mgr.set_ignore_depsgraph(True)
+    any_captured    = False
+    touched         = False   # True once scene/viewport state has been changed
+    original_engine = None
+    _shading_backup = []
 
     try:
-        any_override = any(item.use_shading_override for item in scene.tlx_cameras)
-        if not any_override:
-            original_engine, _shading_backup = shading.lock_viewport_shading(scene, prefs)
-        else:
-            original_engine = None
-            _shading_backup = []
-
         use_round_robin = bool(prefs.camera_round_robin) if prefs else True
         camera_indices  = scheduler.pick_due_cameras(scene, prefs, round_robin=use_round_robin)
         max_per_tick    = int(getattr(prefs, 'camera_max_per_tick', 1)) if prefs else 1
         camera_indices  = camera_indices[:max(1, max_per_tick)]
 
         if not camera_indices:
+            # Nothing is due on this heartbeat: leave the scene and the user's
+            # viewport exactly as they are (no shading lock, no engine swap).
             return False
+
+        touched = True
+        mgr.set_ignore_depsgraph(True)
+
+        any_override = any(item.use_shading_override for item in scene.tlx_cameras)
+        if not any_override:
+            original_engine, _shading_backup = shading.lock_viewport_shading(scene, prefs)
 
         for index in camera_indices:
             camera_item = scene.tlx_cameras[index]
@@ -303,19 +329,20 @@ def capture_cameras(context, base_dir: str, require_dirty: bool = True) -> bool:
         return any_captured
 
     finally:
-        mgr.set_ignore_depsgraph(False)
-        if prefs:
-            suppress_ms = getattr(prefs, 'perf_depsgraph_suppress_ms', constants.DEFAULT_SUPPRESS_MS)
-            mgr.set_suppression(suppress_ms)
-        scene.camera          = original_camera
-        scene.render.filepath = original_filepath
-        img_settings.file_format = original_format
-        if hasattr(img_settings, 'color_mode'):  img_settings.color_mode  = original_color_mode
-        if hasattr(img_settings, 'quality'):     img_settings.quality     = original_quality
-        if hasattr(img_settings, 'compression'): img_settings.compression = original_compression
-        if original_media_type is not None and hasattr(img_settings, 'media_type'):
-            img_settings.media_type = original_media_type
-        shading.restore_viewport_shading(scene, original_engine, _shading_backup)
+        if touched:
+            mgr.set_ignore_depsgraph(False)
+            if prefs:
+                suppress_ms = getattr(prefs, 'perf_depsgraph_suppress_ms', constants.DEFAULT_SUPPRESS_MS)
+                mgr.set_suppression(suppress_ms)
+            scene.camera          = original_camera
+            scene.render.filepath = original_filepath
+            img_settings.file_format = original_format
+            if hasattr(img_settings, 'color_mode'):  img_settings.color_mode  = original_color_mode
+            if hasattr(img_settings, 'quality'):     img_settings.quality     = original_quality
+            if hasattr(img_settings, 'compression'): img_settings.compression = original_compression
+            if original_media_type is not None and hasattr(img_settings, 'media_type'):
+                img_settings.media_type = original_media_type
+            shading.restore_viewport_shading(scene, original_engine, _shading_backup)
         edit_handler.restore_edit_mode(context)
 
 
@@ -463,6 +490,7 @@ def _render_camera(context, scene, camera_item, camera, base_dir, prefs, edit_ha
                     return False
 
             camera_item["_tlx_idx"] = frame_index + 1
+            _record_frame(output_path)
             logger.info(
                 f"[{camera.name}] ✓ frame {frame_index} saved | "
                 f"stype={stype} | final_engine={render.engine}"

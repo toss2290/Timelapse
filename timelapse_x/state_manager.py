@@ -128,6 +128,8 @@ class StateManager:
             self._capture_mode       = ""
             self._session_dir        = ""
             self._counter            = 0
+            self._last_session_dir   = ""   # survives Stop so Compile/Reveal keep working
+            self._last_frame_count   = 0
             self._start_time         = 0.0
             self._last_capture_time  = 0.0
 
@@ -195,6 +197,18 @@ class StateManager:
     def session_dir(self) -> str:
         with self._lock:
             return self._session_dir
+
+    @property
+    def latest_session_dir(self) -> str:
+        """Current session folder while recording, otherwise the last one."""
+        with self._lock:
+            return self._session_dir or self._last_session_dir
+
+    @property
+    def last_frame_count(self) -> int:
+        """Frame count of the most recently finished recording."""
+        with self._lock:
+            return self._last_frame_count
 
     @property
     def counter(self) -> int:
@@ -327,6 +341,8 @@ class StateManager:
             if self._state == RecordingState.IDLE:
                 return
             final_count        = self._counter
+            self._last_session_dir = self._session_dir
+            self._last_frame_count = final_count
             self._state        = RecordingState.IDLE
             self._capture_mode = ""
             self._session_dir  = ""
@@ -471,6 +487,8 @@ class StateManager:
     def force_reset(self):
         with self._lock:
             logger.warning("Force resetting StateManager...")
+            if self._session_dir:
+                self._last_session_dir = self._session_dir
             self._state             = RecordingState.IDLE
             self._capture_mode      = ""
             self._session_dir       = ""

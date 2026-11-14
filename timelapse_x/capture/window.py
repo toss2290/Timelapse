@@ -248,9 +248,10 @@ def capture_window(context, base_dir: str, force_save: bool = False) -> bool:
 
     # Idle / diff detection
     use_diff = (prefs.window_idle_diff if prefs else False) and not force_save
+    frame_thumb = None
     if use_diff:
-        last_image  = mgr.last_window_image
-        should_save = _check_image_changed(temp_path, last_image, prefs)
+        last_image = mgr.last_window_image
+        should_save, frame_thumb = _check_image_changed(temp_path, last_image, prefs)
         if not should_save:
             logger.debug("⊗ Capture skipped: no change detected")
             try:
@@ -283,6 +284,7 @@ def capture_window(context, base_dir: str, force_save: bool = False) -> bool:
                             user_message="Screenshot file was not created")
 
     mgr.last_window_image = final_path
+    _remember_reference(final_path, frame_thumb)
 
     try:
         new_counter = mgr.mark_captured()   # returns the new counter value
@@ -296,7 +298,11 @@ def capture_window(context, base_dir: str, force_save: bool = False) -> bool:
                           user_message="Failed to update frame counter")
 
     try:
-        progress_module.get_recording_progress().add_frame()
+        try:
+            frame_size = os.path.getsize(final_path)
+        except OSError:
+            frame_size = 0
+        progress_module.get_recording_progress().add_frame(frame_size)
     except Exception as e:
         logger.warning(f"add_frame() failed (non-fatal): {e}")
 
@@ -624,22 +630,44 @@ def _restore_view_state(backup: Optional[dict]) -> None:
         logger.warning(f"Stealth-camera view restore failed: {e}")
 
 
-def _check_image_changed(current_path: str, previous_path: str, prefs) -> bool:
-    if not previous_path or not os.path.isfile(previous_path):
-        return True
-    # prefs already fetched by caller
+_ref_thumb: Optional[tuple] = None   # (path, thumbnail) of the last saved frame
+
+
+def _remember_reference(path: str, thumb) -> None:
+    """Keep the saved frame's thumbnail so the next diff loads only the new image."""
+    global _ref_thumb
+    _ref_thumb = (path, thumb) if thumb is not None else None
+
+
+def _check_image_changed(current_path: str, previous_path: str, prefs):
+    """Return (changed, thumbnail of current frame or None)."""
     threshold = getattr(prefs, 'window_idle_threshold',
                         constants.DEFAULT_IDLE_THRESHOLD) if prefs else constants.DEFAULT_IDLE_THRESHOLD
     downscale = getattr(prefs, 'window_idle_downscale',
                         constants.DEFAULT_DOWNSCALE_SIZE) if prefs else constants.DEFAULT_DOWNSCALE_SIZE
+
+    current = utils.image_thumbnail(current_path, downscale)
+    if not previous_path or not os.path.isfile(previous_path):
+        return True, current
+    if current is None:
+        return True, None
+
+    previous = None
+    if _ref_thumb and _ref_thumb[0] == previous_path and _ref_thumb[1].shape[0] == downscale:
+        previous = _ref_thumb[1]
+    if previous is None:
+        previous = utils.image_thumbnail(previous_path, downscale)
+    if previous is None:
+        return True, current
+
     try:
-        diff    = utils.compare_images(current_path, previous_path, downscale=downscale)
+        diff    = float(abs(current - previous).mean())
         changed = diff >= threshold
         logger.debug(f"Image diff: {diff:.4f}  threshold: {threshold:.4f}  changed: {changed}")
-        return changed
+        return changed, current
     except Exception as e:
         logger.warning(f"Image diff failed: {e}, assuming changed")
-        return True
+        return True, current
 
 
 def _set_cooldown(prefs, mgr=None):
@@ -681,6 +709,7 @@ def register():
     logger.info("Window capture registered")
     StateManager().cancel_window_async()
     _rate_limiter.reset_stats()
+    _remember_reference('', None)
 
 
 def unregister():

@@ -110,10 +110,8 @@ def _tlx_capture_tick() -> float | None:
                 skip_timer = prefs and prefs.camera_capture_on_action_count
                 if not skip_timer:
                     if camera_capture and ctx:
-                        result = camera_capture.capture_cameras(
+                        camera_capture.capture_cameras(
                             ctx, base_dir, require_dirty=True)
-                        if result:
-                            progress.get_recording_progress().add_frame()
         except Exception as e:
             logger.error(f"Capture tick failed: {e}", exc_info=True)
 
@@ -545,10 +543,8 @@ class TLX_OT_record(Operator):
                         context, session_dir, force_save=True)
             else:
                 if camera_capture:
-                    result = camera_capture.capture_cameras(
+                    camera_capture.capture_cameras(
                         context, session_dir, require_dirty=False)
-                    if result:
-                        progress.get_recording_progress().add_frame()
         except Exception as e:
             logger.error(f"Immediate capture failed: {e}", exc_info=True)
             raise
@@ -614,7 +610,15 @@ class TLX_OT_update_interval(Operator):
         # the next reschedule. Restart the timer immediately if recording.
         _capture_interval = interval
         if mgr.recording:
-            _start_capture_timer(interval)
+            timer_interval = interval
+            if mgr.capture_mode == 'CAMERA_LIST' and camera_capture:
+                # Per-camera schedulers kept the interval from the moment
+                # recording started; update them, and keep the heartbeat fast
+                # enough for cameras with a shorter override.
+                camera_capture.apply_default_interval(scene, interval)
+                timer_interval = camera_capture.compute_min_timer_interval(
+                    scene, utils.get_addon_preferences())
+            _start_capture_timer(timer_interval)
             err.report_success(self, 'interval_updated',
                                interval=f"{interval:.1f}")
         else:

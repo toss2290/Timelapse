@@ -121,6 +121,19 @@ def generate_filename(base_dir: str, prefix: str, index: int,
     return os.path.join(base_dir, filename)
 
 
+_DIGIT_RUNS = re.compile(r'(\d+)')
+
+
+def natural_sort_key(name: str) -> list:
+    """Sort key that orders embedded numbers by value, not alphabetically.
+
+    Plain sorted() puts 'frame_10000' before 'frame_9999', which scrambles a
+    video as soon as a sequence outgrows its zero padding.
+    """
+    return [int(part) if part.isdigit() else part.lower()
+            for part in _DIGIT_RUNS.split(name)]
+
+
 # ========================================================================================
 # Scene / Camera Validation
 # ========================================================================================
@@ -345,44 +358,38 @@ def _find_window_area_region_uncached() -> Tuple[Optional[object], ...]:
 # Image Comparison
 # ========================================================================================
 
-def compare_images(path_a: str, path_b: str, downscale: int = 64) -> float:
+def image_thumbnail(path: str, size: int = 64):
+    """Return `path` as a size x size RGB float32 numpy array, or None on failure.
+
+    Uses Blender's own image loader (Pillow is not bundled with Blender) and
+    always removes the temporary datablock again.
+    """
+    img = None
     try:
-        from PIL import Image
         import numpy as np
-        img_a = Image.open(bpy.path.abspath(path_a)).resize((downscale, downscale))
-        img_b = Image.open(bpy.path.abspath(path_b)).resize((downscale, downscale))
-        arr_a = np.array(img_a.convert('RGB'), dtype=np.float32) / 255.0
-        arr_b = np.array(img_b.convert('RGB'), dtype=np.float32) / 255.0
-        return float(np.abs(arr_a - arr_b).mean())
-    except ImportError:
-        return _compare_images_blender(path_a, path_b, downscale)
-
-
-def _compare_images_blender(path_a: str, path_b: str, downscale: int) -> float:
-    img_a = img_b = None
-    try:
-        img_a = bpy.data.images.load(bpy.path.abspath(path_a), check_existing=False)
-        img_b = bpy.data.images.load(bpy.path.abspath(path_b), check_existing=False)
-        img_a.scale(downscale, downscale)
-        img_b.scale(downscale, downscale)
-        from array import array
-        n     = downscale * downscale * 4
-        pix_a = array('f', [0.0] * n)
-        pix_b = array('f', [0.0] * n)
-        img_a.pixels.foreach_get(pix_a)
-        img_b.pixels.foreach_get(pix_b)
-        total = sum(abs(pix_a[i] - pix_b[i]) for i in range(0, n, 4))
-        return total / (n // 4)
+        img = bpy.data.images.load(bpy.path.abspath(path), check_existing=False)
+        img.scale(size, size)
+        buf = np.empty(size * size * 4, dtype=np.float32)
+        img.pixels.foreach_get(buf)
+        return buf.reshape(size, size, 4)[:, :, :3].copy()
     except Exception as e:
-        logger.error(f"Image comparison failed: {e}")
-        return 1.0
+        logger.debug(f"Thumbnail failed for {path}: {e}")
+        return None
     finally:
-        for img in (img_a, img_b):
-            if img:
-                try:
-                    bpy.data.images.remove(img, do_unlink=True)
-                except Exception:
-                    pass
+        if img is not None:
+            try:
+                bpy.data.images.remove(img, do_unlink=True)
+            except Exception:
+                pass
+
+
+def compare_images(path_a: str, path_b: str, downscale: int = 64) -> float:
+    """Mean absolute RGB difference (0..1); 1.0 if either image cannot be read."""
+    a = image_thumbnail(path_a, downscale)
+    b = image_thumbnail(path_b, downscale)
+    if a is None or b is None:
+        return 1.0
+    return float(abs(a - b).mean())
 
 
 # ========================================================================================

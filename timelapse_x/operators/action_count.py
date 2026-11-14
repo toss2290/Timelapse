@@ -205,10 +205,7 @@ def _fire_camera_capture(snap) -> None:
         if not base_dir or not os.path.isdir(bpy.path.abspath(base_dir)):
             logger.warning("Action-count capture skipped: session directory missing")
             return
-        result = camera_capture.capture_cameras(bpy.context, base_dir, require_dirty=False)
-        if result:
-            from .. import progress
-            progress.get_recording_progress().add_frame()
+        camera_capture.capture_cameras(bpy.context, base_dir, require_dirty=False)
         logger.info("Action-count capture triggered (Camera List)")
     except Exception as e:
         logger.error(f"Action-count Camera List capture failed: {e}", exc_info=True)

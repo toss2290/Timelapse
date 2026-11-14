@@ -326,7 +326,8 @@ class TLX_PT_panel(Panel):
         box = layout.box()
         box.label(text="Session Info", icon='INFO')
         row = box.row()
-        row.label(text=f'Frames: {mgr.counter}')
+        frames = mgr.counter if mgr.recording else mgr.last_frame_count
+        row.label(text=f'Frames: {frames}')
 
         if mgr.recording:
             status = "PAUSED" if mgr.paused else "RECORDING"
@@ -341,7 +342,7 @@ class TLX_PT_panel(Panel):
             except Exception:
                 pass
 
-        session_dir = mgr.session_dir
+        session_dir = mgr.latest_session_dir
         if session_dir and os.path.isdir(session_dir):
             try:
                 count, size = _cached_session_stats(session_dir)
@@ -386,7 +387,7 @@ class TLX_PT_panel(Panel):
             return
 
         col            = box.column(align=True)
-        session_dir    = mgr.session_dir
+        session_dir    = mgr.latest_session_dir
         session_active = bool(session_dir and os.path.isdir(session_dir))
 
         self._draw_video_progress(col)
@@ -398,7 +399,7 @@ class TLX_PT_panel(Panel):
                      icon='RENDER_ANIMATION')
 
         if not session_active:
-            col.label(text="No active session", icon='INFO')
+            col.label(text="No session yet", icon='INFO')
 
         col.separator()
         col.operator('tlx.compile_video',
